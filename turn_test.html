@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<style>
+        #url { width: 300px; }
+        #port { width: 50px; }
+        #name{ width: 300px; }
+        #pass{ width: 300px; }
+        table#candidates {
+          font-size: 0.7em;
+          overflow-y: auto;
+          text-align: right;
+          width: 100%;
+        }
+        th {
+        font-weight: bold;
+        }
+        th:nth-child(3),td:nth-child(3) {
+          text-align: left
+        }
+        th:nth-child(6),td:nth-child(6) {
+          text-align: left
+        }
+</style>
+</head>
+<body>
+        
+<h1>
+ TURN JS PeerConnection Test
+</h1>
+<div>
+        <button id='getCredButton'>
+                GET CREDENTIALS
+        </button>
+        </div>
+<div>
+        Transport: <input type="radio" name="transport" id="tcp" value="tcp" /> TCP
+        <input type="radio" name="transport" id="udp" value="udp" checked/>UDP
+        </div>
+<div>
+        <input id='url' placeholder='127.0.0.7 or name.com'  /> TURN URL |
+        port: <input type='number' value='3478' id='port' placeholder='port' />
+</div>
+
+
+<div>
+        <input id="name" placeholder="turn username" /> : Username
+</div>
+<div>
+        <input id="pass" placeholder="turn password" /> : Password
+</div>
+
+<div>
+<button id='button'>
+        TEST
+</button>
+</div>
+
+<h4 id='result'></h4>
+<table id="candidates">
+  <thead id="candidatesHead">
+  <tr>
+      <th>Component</th>
+      <th>Type</th>
+      <th>Foundation</th>
+      <th>Protocol</th>
+      <th>Address</th>
+      <th>Port</th>
+      <th>Priority</th>
+      <th>Mid</th>
+      <th>MLine Index</th>
+      <th>Username Fragment</th>
+  </tr>
+  </thead>
+  <tbody id="candidatesBody"></tbody>
+</table>
+
+<script>
+var res = id('result');
+var candidateTBody = id('candidatesBody')
+
+id('button').onclick = function()
+{
+        res.innerHTML = 'Checking ...';
+        var url = 'turn:'+id('url').value+':'+id('port').value, useUDP = id('udp').checked;
+        url +='?transport=' + (useUDP ? 'udp': 'tcp');
+        checkTURNServer({
+                urls: [url],
+                username: id('name').value, 
+                credential: id('pass').value
+        }).then(function(bool){
+                if(bool)
+                        res.innerHTML = 'HURRAY!';
+                else
+                        throw new Error('Doesn\'t work');
+        }).catch(function(e){
+                res.innerHTML = 'NOPE';
+                console.log(e);
+        });
+};
+
+id('getCredButton').onclick = function()
+{
+        res.innerHTML = 'Obtaining credentials ...';
+        postData("127.0.0.1:8209/rtcTurn/v1/turnReservation", { userContext: "foo", ttl: 3600}).then(data => {
+                res.innerHTML = data.JSON;
+        });
+}
+
+
+function checkTURNServer(turnConfig)
+{ 
+        // Clean out the table.
+        while (candidateTBody.firstChild) {
+          candidateTBody.removeChild(candidateTBody.firstChild);
+        }
+        const config = {
+                  iceServers: [turnConfig],
+                  iceTransportPolicy: "all",  // Possible values: "all" and"relay"
+                  iceCandidatePoolSize: "0"
+                }
+        const offerOptions = {offerToReceiveAudio: 1};
+        console.log(`Creating new PeerConnection with config=${JSON.stringify(config)}`);
+        return new Promise(function(resolve, reject)
+        {
+                setTimeout(function() {
+                        if(promiseResolved) 
+                                return;
+                        resolve(false);
+                        promiseResolved = true;
+                }, 3000);
+
+                var promiseResolved = false
+                //, myPeerConnection = window.RTCPeerConnection || window.mozRTCPeerConnection || window.webkitRTCPeerConnection   //compatibility for firefox and chrome
+                //, pc = new myPeerConnection(config)
+                pc = new RTCPeerConnection(config)
+                , noop = function(){};
+
+                pc.createDataChannel("");    //create a bogus data channel
+                pc.createOffer(function(sdp){
+                    if (sdp.sdp.indexOf('typ relay') > -1)
+                        { // sometimes sdp contains the ice candidates...
+                                promiseResolved = true;
+                                resolve(true);
+                        }
+                    pc.setLocalDescription(sdp, noop, noop);
+                }, noop, offerOptions);    // create offer and set local description
+
+                pc.onicecandidate = function(ice) {  //listen for candidate events
+                        iceCallback(ice);
+                        if(promiseResolved || !ice || !ice.candidate || !ice.candidate.candidate || !(ice.candidate.candidate.indexOf('typ relay')>-1))
+                                return;
+                        promiseResolved = true;
+                        resolve(true);
+                };
+        });   
+}
+
+
+function id(val){
+	return document.getElementById(val);
+}
+
+async function postData(url = '', data = {}) {
+        const response = await fetch(url, {
+                method: 'POST',
+                mode: 'cors',
+                headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                },
+                body: JSON.stringify(data) // body data type must match "Content-Type" header
+        });
+        return response.json(); // parses JSON response into native JavaScript objects
+}
+
+function iceCallback(event) {
+  const row = document.createElement('tr');
+  if (event.candidate) {
+    if (event.candidate.candidate === '') {
+      return;
+    }
+    const {candidate} = event;
+    appendCell(row, candidate.component);
+    appendCell(row, candidate.type);
+    appendCell(row, candidate.foundation);
+    appendCell(row, candidate.protocol);
+    appendCell(row, candidate.address);
+    appendCell(row, candidate.port);
+    appendCell(row, formatPriority(candidate.priority));
+    appendCell(row, candidate.sdpMid);
+    appendCell(row, candidate.sdpMLineIndex);
+    appendCell(row, candidate.usernameFragment);
+  } 
+  candidateTBody.appendChild(row);
+}
+
+function appendCell(row, val, span) {
+  const cell = document.createElement('td');
+  cell.textContent = val;
+  if (span) {
+    cell.setAttribute('colspan', span);
+  }
+  row.appendChild(cell);
+}
+
+function formatPriority(priority) {
+  return [
+    priority >> 24,
+    (priority >> 8) & 0xFFFF,
+    priority & 0xFF
+  ].join(' | ');
+}
+
+</script>
+</body>
+</html>
